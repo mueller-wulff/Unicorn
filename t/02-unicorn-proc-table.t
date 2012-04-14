@@ -1,12 +1,11 @@
 use strict;
 use warnings;
 
-use Test::More tests => 2;
-use Unicorn::Proc;
+use Test::More;
+use Unicorn::Manager::CLI::Proc;
 
-my $u_p_table = Unicorn::Proc::Table->new;
+my $u_p_table = Unicorn::Manager::CLI::Proc::Table->new;
 
-isa_ok $u_p_table, 'Unicorn::Proc::Table';
+isa_ok $u_p_table, 'Unicorn::Manager::CLI::Proc::Table';
 
-ok ref $u_p_table->ptable eq 'Hash';
-
+done_testing;

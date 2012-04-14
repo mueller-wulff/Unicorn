@@ -1,34 +1,26 @@
 #!/usr/bin/perl
 
+use 5.010;
 use strict;
 use warnings;
-use v5.0010;
-use Getopt::Long;
 
-use Unicorn;
+$| = 1;
 
-my $HELP = <<'END';
+use Getopt::Long qw(:config pass_through);
+
+use Unicorn::Manager::CLI;
+use IO::Socket;
+use JSON;
+
+my $HELP = <<"END";
 Synopsis
-    unicorn.pl [options]
-
-Options
-    -u, --user
-        username of unicorns owner
-    -a, --action
-        action to perform, see section Actions for valid actions
-    -c, --config
-        path to the unicorn config file
-    --args
-        optional additional arguments used with action 'start'
-        overrides options of the config file
-        see section Examples for proper usage
-        "-D" is an additional argument you most likely want to provide
-    --debug
-        flag to enable debug output
+    $0 [action] [options]
 
 Actions
+    help
+        show this help
     show
-        dumps a YAML structure of user ids and the process ids of masters
+        dumps a structure of user ids and the process ids of masters
         and their children
     start
         starts a users unicorn server, requires --config to be specified
@@ -42,64 +34,59 @@ Actions
         adds a unicorn worker
     rm_worker
         removes a unicorn worker
+    version
+        print Unicorn::Manager version
+    query
+        to be implemented
+
+Options
+    -u, --user
+        username of unicorns owner (can be ommited if user is not root)
+    -c, --config
+        path to the unicorn config file
+    --args
+        optional additional arguments used with action 'start'
+        overrides options of the config file
+        see section Examples for proper usage
+        "-D" is an additional argument you most likely want to provide
+    --debug
+        flag to enable debug output
+    --rails
+        defaults to 1 for now. so it has no effect at all
 
 Examples
-    unicorn.pl -a show
-    unicorn.pl -u railsuser -a start -c /home/railsuser/app/unicorn.rb --args "--listen 0.0.0.0:80, -D"
-    unicorn.pl -u railsuser -a restart --debug
-    unicorn.pl -u railsuser -a add_worker
+    uc.pl show
+    uc.pl start -u railsuser -c /home/railsuser/app/unicorn.rb --args "--listen 0.0.0.0:80, -D"
+    uc.pl restart -u railsuser
+    uc.pl add_worker
 
 END
 
-my $action;
 my $user;
 my $config;
-my $args;
+my $host;
+my $port  = 4242;
+my $args  = undef;
 my $DEBUG = 0;
+my $rails = 1;
 
 my $result = GetOptions(
-    'action|a=s' => \$action,
     'user|u=s'   => \$user,
     'config|c=s' => \$config,
     'args=s'     => \$args,
     'debug'      => \$DEBUG,
+    'rails'      => \$rails,
+    'host|h=s'   => \$host,
+    'port|p=i'   => \$port,
 );
 
-if ($action eq 'show'){
-    my $uc = Unicorn->new(
-        username => 'nobody',
-        DEBUG => $DEBUG,
-    );
+my ( $action, @params ) = @ARGV;
 
-    my $uidref = $uc->proc->process_table->ptable;
-
-    for (keys %{$uidref}){
-        my $username = getpwuid $_;
-        my $pidref = $uidref->{$_};
-
-        print "$username:\n";
-
-        for my $master (keys %{$pidref}){
-            print "    master: $master\n";
-            for my $worker (@{$pidref->{$master}}){
-                if (ref($worker) ~~ 'HASH'){
-                    for (keys %$worker){
-                        print "        new master: " . $_ . "\n";
-                        print "            new worker: $_\n" for @{$worker->{$_}}
-                    }
-                }
-                else {
-                    print "        worker: $worker\n";
-                }
-            }
-        }
-    }
-
-    exit 0;
-}
-
-if ($> > 0){
+if ( $> > 0 ) {
     $user = getpwuid $> unless $user;
+}
+else {
+    $user = 'nobody' unless $user;
 }
 
 unless ( $user && $action ) {
@@ -109,50 +96,154 @@ unless ( $user && $action ) {
 
 my $arg_ref = [];
 
+# make -D default as most of the time you will want to start Unicorn as daemon
+$args = "-D" unless defined $args;
+
 $arg_ref = [ split ',', $args ] if $args;
 
-my $unicorn = Unicorn->new(
-    username => $user,
-    DEBUG    => $DEBUG,
-);
+my $unicorn = sub {
+    return Unicorn::Manager::CLI->new(
+        username => $user,
+        rails    => $rails,
+        DEBUG    => $DEBUG,
+    );
+};
 
-if ( $action eq 'start' ) {
-    unless ($config) {
-        print $HELP;
-        die "Action 'start' requires a config file.\n";
-    }
-    if ($DEBUG) {
-        print "\$unicorn->start( config => \$config, args => \$arg_ref )\n";
-        print " -> \$config => $config\n";
-        use Data::Dumper;
-        print " -> \$arg_ref => " . Dumper($arg_ref);
-    }
-    $unicorn->start( config => $config, args => $arg_ref );
-}
-elsif ( $action eq 'stop' ) {
-    print "\$unicorn->stop()\n" if $DEBUG;
-    $unicorn->stop();
+my $dispatch_cli = {
+    help => sub {
+        say $HELP;
+        exit 0;
+    },
+    show => sub {
+        my $uc = Unicorn::Manager::CLI->new(
+            username => 'nobody',
+            DEBUG    => $DEBUG,
+        );
 
-}
-elsif ( $action eq 'restart' ) {
-    print "\$unicorn->restart( mode => 'graceful' )\n" if $DEBUG;
-    $unicorn->restart( mode => 'graceful' );
-}
-elsif ( $action eq 'reload' ) {
-    print "\$unicorn->reload()\n" if $DEBUG;
-    $unicorn->reload();
-}
-elsif ( $action eq 'add_worker' ) {
-    print "\$unicorn->add_worker( num => 1 )\n" if $DEBUG;
-    $unicorn->add_worker( num => 1 );
-}
-elsif ( $action eq 'rm_worker' ) {
-    print "\$unicorn->remove_worker( num => 1 )\n" if $DEBUG;
-    $unicorn->remove_worker( num => 1 );
+        my $uidref = $uc->proc->process_table->ptable;
+
+        for ( keys %{$uidref} ) {
+            my $username = getpwuid $_;
+            my $pidref   = $uidref->{$_};
+
+            print "$username:\n";
+
+            for my $master ( keys %{$pidref} ) {
+                print "    master: $master\n";
+                for my $worker ( @{ $pidref->{$master} } ) {
+                    if ( ref($worker) ~~ 'HASH' ) {
+                        for ( keys %$worker ) {
+                            print "        new master: " . $_ . "\n";
+                            print "            new worker: $_\n" for @{ $worker->{$_} };
+                        }
+                    }
+                    else {
+                        print "        worker: $worker\n";
+                    }
+                }
+            }
+        }
+
+        exit 0;
+    },
+    start => sub {
+        unless ($config) {
+            print $HELP;
+            die "Action 'start' requires a config file.\n";
+        }
+        if ($DEBUG) {
+            say "\$unicorn->start( config => \$config, args => \$arg_ref )";
+            say " -> \$config => $config";
+            use Data::Dumper;
+            say " -> \$arg_ref => " . Dumper($arg_ref);
+        }
+        return $unicorn->()->start( { config => $config, args => $arg_ref } );
+    },
+    stop => sub {
+        return $unicorn->()->stop;
+    },
+    restart => sub {
+        return $unicorn->()->restart( { mode => 'graceful' } );
+    },
+    reload => sub {
+        return $unicorn->()->reload;
+    },
+    add_worker => sub {
+        return $unicorn->()->add_worker( { num => 1 } );
+    },
+    rm_worker => sub {
+        return $unicorn->()->remove_worker( { num => 1 } );
+    },
+    version => sub {
+        return Unicorn::Manager::Version->get;
+    },
+    query => sub {
+        $params[0] = 'help' unless @params;
+        return $unicorn->()->query(@params);
+    },
+};
+
+my $dispatch_server = {
+    query => sub {
+        my ( $query, @args ) = @params;
+        my $data = {
+            query => $query,
+            args  => [@args],
+        };
+        my $json = JSON->new->utf8(1);
+
+        my $sock = IO::Socket::INET->new(
+            PeerAddr => $host || 'localhost',
+            PeerPort => $port || 4242,
+            Proto    => 'tcp',
+        );
+
+        my $json_string = $json->encode($data);
+        my $res;
+
+        if ( not $sock ) {
+            say "Apparently the Unicorn::Manager::Server is not running or not accessible.";
+            say "Try running without the host command line switch or check your firewall.";
+
+            exit 1;
+        }
+
+        print $sock "$json_string\n";
+
+        while (<$sock>) {
+            $res .= $_;
+        }
+
+        close $sock;
+
+        return $res;
+    },
+};
+
+my $response;
+my $no_such_action = sub {
+    say "No action $action defined";
+    exit 1;
+};
+
+if ($host) {
+    if ( exists $dispatch_server->{$action} ) {
+        $response = $dispatch_server->{$action}->();
+    }
+    else {
+        $no_such_action->();
+    }
 }
 else {
-    die "No such action\n";
+    if ( exists $dispatch_cli->{$action} ) {
+        $response = $dispatch_cli->{$action}->();
+    }
+    else {
+        $no_such_action->();
+    }
 }
+
+say $response;
 
 exit 0;
 

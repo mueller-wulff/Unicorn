@@ -1,9 +1,12 @@
-#!perl -T
-
-use Test::More tests => 1;
+use Test::More;
 
 BEGIN {
-    use_ok( 'Unicorn' ) || print "Bail out!";
+    use_ok('Unicorn::Manager::CLI') || print "Bail out!";
+    use_ok( 'Unicorn::Manager::Version' || print "No version information!" );
 }
 
-diag( "Testing Unicorn $Unicorn::VERSION, Perl $], $^X" );
+my $v = Unicorn::Manager::Version->new;
+
+diag( 'Testing Unicorn::Manager::CLI ' . $v->get . ", Perl $], $^X" );
+
+done_testing;
