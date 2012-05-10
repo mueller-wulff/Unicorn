@@ -62,6 +62,10 @@ my $build = Module::Build->new(
 
     meta_merge => {
         provides => {
+            'Unicorn::Manager' => {
+                file    => 'lib/Unicorn/Manager.pm',
+                version => $v->get,
+            },
             'Unicorn::Manager::CLI' => {
                 file    => 'lib/Unicorn/Manager/CLI.pm',
                 version => $v->get,
@@ -88,6 +92,7 @@ my $build = Module::Build->new(
 
 if ($meta) {
     $build->dispatch('distmeta');
+    exit 0;
 }
 
 if ($dist) {
@@ -96,6 +101,7 @@ if ($dist) {
     $build->dispatch('distmeta');
     $build->dispatch('dist');
     $build->create_build_script();
+    exit 0;
 }
 
 if ($install) {
@@ -103,5 +109,8 @@ if ($install) {
     $build->dispatch( 'test', verbose => 1 );
     $build->dispatch('install');
     $build->create_build_script();
+    exit 0;
 }
+
+$build->create_build_script();
 
